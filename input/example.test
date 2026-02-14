@@ -1,0 +1,121 @@
+// TestLang++ - Complete Test Suite
+// All tests in one file as per assignment spec
+
+config {
+  base_url = "http://localhost:8081";
+  header "Content-Type" = "application/json";
+  header "X-App" = "TestLangDemo";
+}
+
+// Variables
+let user = "admin";
+let password = "1234";
+let userId = 42;
+let adminRole = "ADMIN";
+
+// Test 1: Login
+test Login {
+    DESCRIPTION : "get login details"
+  POST "/api/login" {
+    body = "{ \"username\": \"$user\", \"password\": \"$password\" }";
+  }
+  expect status = 200;
+  expect header "Content-Type" contains "json";
+  expect body contains "\"token\":";
+}
+
+// Test 2: Login with multiline body
+test LoginMultiline {
+  DESCRIPTION : "get login details with multiple body string implementation"
+  POST "/api/login" {
+    body = """
+{
+  "username": "$user",
+  "password": "$password"
+}
+""";
+  }
+  expect status = 200;
+  expect header "Content-Type" contains "json";
+  expect body contains "\"token\":";
+}
+
+// Test 3: Get User by ID
+test GetUserById {
+  DESCRIPTION : "get user by id"
+  GET "/api/users/$userId";
+  expect status = 200;
+  expect body contains "\"id\":42";
+  expect body contains "\"username\":";
+}
+
+// Test 4: Get User by ID
+test GetUserByIdRangeStatusCheck {
+  DESCRIPTION : "Trying the get the range of status checking"
+  GET "/api/users/$userId";
+  expect status in 200..299;
+  expect body contains "\"id\":42";
+  expect body contains "\"username\":";
+}
+
+// Test 5: Get User by Invalid ID
+test GetUserByInvalidId {
+  GET "/api/users/45";
+  expect status in 200..299;
+  expect body contains "\"id\":45";
+  expect body contains "\"username\":";
+}
+
+// Test 6: Update User Role
+test UpdateUser {
+  PUT "/api/users/$userId" {
+    body = "{ \"role\": \"$adminRole\", \"email\": \"admin@example.com\" }";
+  }
+  expect status = 200;
+  expect header "X-App" = "TestLangDemo";
+  expect header "Content-Type" contains "json";
+  expect body contains "\"updated\":true";
+  expect body contains "\"role\":\"ADMIN\"";
+}
+
+// Test 7: Update user with multiline body
+test UpdateUserMultiline {
+  PUT "/api/users/$userId" {
+    body = """
+{
+  "role": "ADMIN",
+  "email": "admin@example.com"
+}
+""";
+  }
+  expect status = 200;
+  expect body contains "\"updated\":true";
+  expect body contains "\"role\":\"ADMIN\"";
+}
+
+// Test 8: Delete User
+test DeleteUser {
+  DELETE "/api/users/42";
+  expect status = 200;
+  expect body contains "\"deleted\":";
+}
+
+// Test 9: Another Login Test
+test LoginDifferentUser {
+  POST "/api/login" {
+    header "User-Agent" = "TestLangClient/1.0";
+    body = "{ \"username\": \"testuser\", \"password\": \"test123\" }";
+  }
+  expect status = 200;
+  expect body contains "\"token\":";
+}
+
+// Test 10: Another Invalid Login Test
+test LoginWithInvalidUserCredentials {
+  POST "/api/login" {
+    header "User-Agent" = "TestLangClient/1.0";
+    body = "{ \"username\": \"testuser\", \"password\": \"test1234\" }";
+  }
+  expect status = 200;
+  expect body contains "\"token\":";
+}
