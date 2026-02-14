@@ -1,0 +1,314 @@
+package parser;
+
+import java_cup.runtime.*;
+import ast.*;
+import java.util.*;
+
+/* Parser code */
+parser code {:
+    public void syntax_error(Symbol cur_token) {
+        String errorMsg = "\n❌ Syntax Error at line " + cur_token.left + ", column " + cur_token.right;
+        
+        // Check what token was expected based on the current state
+        String tokenValue = cur_token.value != null ? cur_token.value.toString() : "unknown";
+        
+        // Check if this is likely a missing semicolon after a request
+        if (cur_token.sym == sym.EXPECT) {
+            errorMsg = "Expected ';' after request at line " + cur_token.left + ", column " + cur_token.right + ":";
+            errorMsg += "\n   -> Expecting semicolon ';' after a request";
+            errorMsg += "\n   -> Example 1: GET \"/api/users\";";
+            errorMsg += "\n   -> Example 2: DELETE \"/api/users/1\";";
+            report_error(errorMsg, null);
+            System.exit(1);
+        }
+        // Provide specific error messages based on the token type
+        else if (cur_token.sym == sym.NUMBER) {
+            // Check if this appears after 'let' keyword - likely an invalid identifier
+            errorMsg += "\n   -> Invalid identifier '" + tokenValue + "'";
+            errorMsg += "\n   -> Identifiers cannot start with a digit";
+            errorMsg += "\n   -> Valid examples: user1, userId, admin_role";
+        } else if (tokenValue.matches("^[0-9].*")) {
+            errorMsg += "\n   -> Invalid identifier '" + tokenValue + "'";
+            errorMsg += "\n   -> Identifiers must start with a letter or underscore";
+        } else {
+            errorMsg += "\n   -> Unexpected token: " + tokenValue;
+        }
+        
+        report_error(errorMsg, null);
+    }
+
+    public void report_error(String message, Object info) {
+        System.err.println(message);
+    }
+    
+:};
+
+/* Terminals (tokens) */
+terminal CONFIG, BASE_URL, HEADER, LET, TEST, DESCRIPTION;
+terminal GET, POST, PUT, DELETE;
+terminal EXPECT, STATUS, BODY, CONTAINS, IN;
+terminal EQUALS, SEMICOLON, LBRACE, RBRACE, DOTDOT, COLON;
+terminal String IDENTIFIER, STRING, MULTILINE_STRING;
+terminal Integer NUMBER;
+
+/* Non-terminals */
+non terminal ProgramNode program;
+non terminal ConfigNode config_opt, config_block;
+non terminal List config_items;
+non terminal List variables;
+non terminal VariableNode variable;
+non terminal Object value;
+non terminal List tests;
+non terminal TestNode test_block;
+non terminal List test_statements;
+non terminal Object test_statement;
+non terminal RequestNode request;
+non terminal List request_block_opt, request_items;
+non terminal Object request_item;
+non terminal HeaderNode header_decl;
+non terminal AssertionNode assertion;
+
+/* Precedence (not needed for this grammar) */
+
+/* Grammar Rules */
+start with program;
+
+/* Program: config? variables* tests+ */
+program ::= 
+    config_opt:c variables:v tests:t
+    {: 
+        ProgramNode prog = new ProgramNode();
+        if (c != null) {
+            prog.setConfig(c);
+        }
+        for (Object var : v) {
+            prog.addVariable((VariableNode) var);
+        }
+        for (Object test : t) {
+            prog.addTest((TestNode) test);
+        }
+        RESULT = prog;
+    :}
+    ;
+
+/* Config block (optional) */
+config_opt ::= 
+    config_block:c          {: RESULT = c; :}
+    | /* empty */           {: RESULT = null; :}
+    ;
+
+config_block ::= 
+    CONFIG LBRACE config_items:items RBRACE
+    {:
+        ConfigNode config = new ConfigNode();
+        for (Object item : items) {
+            if (item instanceof String) {
+                config.setBaseUrl((String) item);
+            } else if (item instanceof HeaderNode) {
+                config.addHeader((HeaderNode) item);
+            }
+        }
+        RESULT = config;
+    :}
+    ;
+
+config_items ::=
+    config_items:list BASE_URL EQUALS STRING:url SEMICOLON
+    {:
+        list.add(url);
+        RESULT = list;
+    :}
+    | config_items:list header_decl:h
+    {:
+        list.add(h);
+        RESULT = list;
+    :}
+    | /* empty */
+    {:
+        RESULT = new ArrayList();
+    :}
+    ;
+
+header_decl ::=
+    HEADER STRING:key EQUALS STRING:val SEMICOLON
+    {:
+        RESULT = new HeaderNode(key, val);
+    :}
+    ;
+
+/* Variables: let name = value; */
+variables ::=
+    variables:list variable:v
+    {:
+        list.add(v);
+        RESULT = list;
+    :}
+    | /* empty */
+    {:
+        RESULT = new ArrayList();
+    :}
+    ;
+
+variable ::=
+    LET IDENTIFIER:name EQUALS value:val SEMICOLON
+    {:
+        RESULT = new VariableNode(name, val);
+    :}
+    ;
+
+value ::=
+    STRING:s        {: RESULT = s; :}
+    | NUMBER:n      {: RESULT = n; :}
+    ;
+
+/* Tests: test Name { ... } */
+tests ::=
+    tests:list test_block:t
+    {:
+        list.add(t);
+        RESULT = list;
+    :}
+    | test_block:t
+    {:
+        List list = new ArrayList();
+        list.add(t);
+        RESULT = list;
+    :}
+    ;
+
+test_block ::=
+    TEST IDENTIFIER:name LBRACE test_statements:stmts RBRACE
+    {:
+        TestNode test = new TestNode(name);
+        for (Object stmt : stmts) {
+            if (stmt instanceof RequestNode) {
+                test.addRequest((RequestNode) stmt);
+            } else if (stmt instanceof AssertionNode) {
+                test.addAssertion((AssertionNode) stmt);
+            } else if (stmt instanceof String) {
+                // This is a description
+                test.setDescription((String) stmt);
+            }
+        }
+        RESULT = test;
+    :}
+    ;
+
+test_statements ::=
+    test_statements:list test_statement:stmt
+    {:
+        list.add(stmt);
+        RESULT = list;
+    :}
+    | test_statement:stmt
+    {:
+        List list = new ArrayList();
+        list.add(stmt);
+        RESULT = list;
+    :}
+    ;
+
+test_statement ::=
+    DESCRIPTION COLON STRING:desc  {: RESULT = desc; :}
+    | request:r           {: RESULT = r; :}
+    | assertion:a       {: RESULT = a; :}
+    ;
+
+/* HTTP Requests */
+request ::=
+    GET STRING:path SEMICOLON
+    {:
+        RESULT = new RequestNode(RequestNode.HttpMethod.GET, path);
+    :}
+    | DELETE STRING:path SEMICOLON
+    {:
+        RESULT = new RequestNode(RequestNode.HttpMethod.DELETE, path);
+    :}
+    | POST STRING:path request_block_opt:items
+    {:
+        RequestNode req = new RequestNode(RequestNode.HttpMethod.POST, path);
+        for (Object item : items) {
+            if (item instanceof HeaderNode) {
+                req.addHeader((HeaderNode) item);
+            } else if (item instanceof String) {
+                req.setBody((String) item);
+            }
+        }
+        RESULT = req;
+    :}
+    | PUT STRING:path request_block_opt:items
+    {:
+        RequestNode req = new RequestNode(RequestNode.HttpMethod.PUT, path);
+        for (Object item : items) {
+            if (item instanceof HeaderNode) {
+                req.addHeader((HeaderNode) item);
+            } else if (item instanceof String) {
+                req.setBody((String) item);
+            }
+        }
+        RESULT = req;
+    :}
+    ;
+
+request_block_opt ::=
+    LBRACE request_items:items RBRACE      {: RESULT = items; :}
+    | /* empty */                          {: RESULT = new ArrayList(); :}
+    ;
+
+request_items ::=
+    request_items:list request_item:item
+    {:
+        list.add(item);
+        RESULT = list;
+    :}
+    | /* empty */
+    {:
+        RESULT = new ArrayList();
+    :}
+    ;
+
+request_item ::=
+    header_decl:h       {: RESULT = h; :}
+    | BODY EQUALS STRING:s SEMICOLON    {: RESULT = s; :}
+    | BODY EQUALS MULTILINE_STRING:s SEMICOLON    {: RESULT = s; :}
+    | BODY EQUALS NUMBER:n SEMICOLON    
+    {: 
+        System.err.println("Expected STRING after 'body =' at line " + nleft + ", column " + nright + ":");
+        System.err.println("   -> Body must be a string, not a number");
+        System.err.println("   -> Example : { \"username\": \"$user\", \"password\": \"$password\" }");
+        System.exit(1);
+        RESULT = null;
+    :}
+    ;
+
+/* Assertions */
+assertion ::=
+    EXPECT STATUS EQUALS NUMBER:code SEMICOLON
+    {:
+        RESULT = new AssertionNode(AssertionNode.AssertionType.STATUS, code);
+    :}
+    | EXPECT STATUS IN NUMBER:min DOTDOT NUMBER:max SEMICOLON
+    {:
+        RESULT = new AssertionNode(AssertionNode.AssertionType.STATUS_RANGE, min, max);
+    :}
+    | EXPECT STATUS EQUALS STRING:s SEMICOLON
+    {:
+        System.err.println("Expected NUMBER for status at line " + sleft + ", column " + sright + ":");
+        System.err.println("   -> Status must be a number, not a string");
+        System.err.println("   -> Examples: 200, 201, 400");
+        System.exit(1);
+        RESULT = null;
+    :}
+    | EXPECT HEADER STRING:key EQUALS STRING:val SEMICOLON
+    {:
+        RESULT = new AssertionNode(AssertionNode.AssertionType.HEADER_EQUALS, key, val);
+    :}
+    | EXPECT HEADER STRING:key CONTAINS STRING:val SEMICOLON
+    {:
+        RESULT = new AssertionNode(AssertionNode.AssertionType.HEADER_CONTAINS, key, val);
+    :}
+    | EXPECT BODY CONTAINS STRING:val SEMICOLON
+    {:
+        RESULT = new AssertionNode(AssertionNode.AssertionType.BODY_CONTAINS, val);
+    :}
+    ;
